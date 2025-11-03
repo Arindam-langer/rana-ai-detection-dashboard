@@ -1,13 +1,3 @@
-# Arindam's changes:
-## To-do's
-    1. making the cnn model work for deepfake detection.
-        - currently used 2 models:
-            one for image detection and video detection using api calls to outside.
-            image model: dima806/deepfake_vs_real_image_detection (works)
-            video model: Naman712/Deep-fake-detection(didnot test but should work)
-    2. making the fraud detection model to work.
-    3. customizing the report.
-
 
 
 # AI Detection Dashboard
@@ -68,7 +58,15 @@ ai-detection-dashboard/
 ```
 
 ---
-
+### Arindam's changes:
+#### To-do's
+    1. making the cnn model work for deepfake detection.
+        - currently used 2 models:
+            one for image detection and video detection using api calls to outside.
+            image model: dima806/deepfake_vs_real_image_detection (works)
+            video model: Naman712/Deep-fake-detection(didnot test but should work)
+    2. making the fraud detection model to work.
+    3. customizing the report.
 ## 👨‍💻 Author
 
 - **Akshat Jasrotia**  [[GitHub]](https://github.com/akshatjasrotia85)
@@ -79,5 +77,6 @@ ai-detection-dashboard/
 ---
 
 ## 📄 License
+
 
 This project is licensed under the CUJ,J&K
