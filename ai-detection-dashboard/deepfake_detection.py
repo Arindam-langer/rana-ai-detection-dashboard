@@ -1,290 +1,389 @@
-import torch
-from transformers import AutoModelForImageClassification, AutoImageProcessor
-from PIL import Image
-import cv2
+"""
+Lightweight deepfake detection using pretrained models from Hugging Face.
+NO TRAINING REQUIRED - uses transfer learning.
+"""
+
 import os
-from typing import Dict, Union
+from typing import Dict, Union, List, Optional
+from datetime import datetime
+
 import numpy as np
+import torch
+import cv2
+from PIL import Image
+import torchaudio
+
+from transformers import (
+    pipeline,
+    AutoFeatureExtractor, 
+    AutoModelForAudioClassification,
+    AutoImageProcessor,
+    AutoModelForImageClassification
+)
 
 
 class DeepfakeDetector:
     """
-    A class to detect deepfakes in images and videos using pre-trained models.
-    This detector can analyze both individual images and video files frame-by-frame.
+    Lightweight deepfake detector using pretrained Hugging Face models.
+    No training required - works out of the box!
     """
-
-    def __init__(self):
-        """
-        Sets up the computing device (GPU if available, otherwise CPU).
-        Note: Model loading happens when detect_image or detect_video is called.
-        """
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        # we will initialize them as we need because we use two different pre trained models
-        # if you find one singular model then good
-        self.model = None
-        self.processor = None
-        self.current_model_name = None
-
-    def load_model(self, model_name: str):
-        """
-        Load a specific model from Hugging Face.
-        Only loads if we haven't already loaded this model.
-        Args:
-            model_name: The Hugging Face model identifier (e.g., "username/model-name")
-        """
-        # Only load the model if it's different from what's currently loaded
-        if self.current_model_name != model_name:
-            try:
-                # Load the image processor (handles image preprocessing)
-                self.processor = AutoImageProcessor.from_pretrained(model_name)
-
-                # Load the actual classification model and move it to GPU/CPU
-                self.model = AutoModelForImageClassification.from_pretrained(
-                    model_name
-                ).to(self.device)
-
-                # Set model to evaluation mode (disables dropout, batch normalization updates, etc.)
-                self.model.eval()
-
-                # Remember which model we loaded
-                self.current_model_name = model_name
-
-            except Exception as e:
-                # If something goes wrong, raise an error with details
-                raise RuntimeError(f"Failed to load model {model_name}: {str(e)}")
-
-    # detecting which file it is and calling functions accordingly
-    """
-    Args:
-        file_path: Path to the file (image or video)
+    
+    def __init__(
+        self,
+        device: Optional[torch.device] = None,
+        image_model_name: str = "Organika/sdxl-detector",
+        audio_model_name: str = "mo-thecreator/Deepfake-audio-detection"
+    ):
+        self.device = device or (torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu"))
         
-    Returns:
-        Dictionary with detection results (format depends on file type)
-    """
-
-    def detect(self, file_path: str) -> Dict[str, Union[str, float]]:
-
-        if not os.path.exists(file_path):
-            return {"error": "File not found", "prediction": None, "confidence": 0.0}
-
-        # videos
-        video_extensions = (".mp4", ".avi", ".mov", ".mkv", ".flv", ".wmv")
-
-        # images
-        image_extensions = (".jpg", ".jpeg", ".png", ".bmp", ".webp")
-
-        #making them lowercase for ease
-        file_ext = os.path.splitext(file_path)[1].lower()
-
-        if file_ext in video_extensions:
-            return self.detect_video(file_path)
-        elif file_ext in image_extensions:
-            return self.detect_image(file_path)
-
-        else:
-            return {
-                "error": "Unsupported file format",
-                "prediction": None,
-                "confidence": 0.0,
-            }
-
-    def detect_image(self, image_path: str) -> Dict[str, Union[str, float]]:
-        """
-        How it works:
-        1. Loads the image from disk
-        2. Preprocesses it (resize, normalize, etc.)
-        3. Runs it through the neural network
-        4. Returns prediction (fake/real) with confidence score
-
-        Args:
-            image_path: Full path to the image file (e.g., "/path/to/image.jpg")
-
-        Returns:
-            Dictionary containing:
-            - prediction: "fake" or "real"
-            - confidence: How confident the model is (0.0 to 1.0)
-            - file_path: The path to the analyzed file
-            - type: "image"
-            - error: Error message if something went wrong
-        """
+        print(f"Loading models on device: {self.device}")
+        
+        # Image detection using pretrained Hugging Face model
         try:
-            # pre-trained model for image deepfakes
-            model_name = "dima806/deepfake_vs_real_image_detection"
-            self.load_model(model_name)
+            print(f"DEBUG:Loading image model: {image_model_name}")
+            self.image_processor = AutoImageProcessor.from_pretrained(image_model_name)
+            self.image_model = AutoModelForImageClassification.from_pretrained(image_model_name).to(self.device)
+            self.image_model.eval()
+            self.image_model_name = image_model_name
+            print("DEBUG:Image model loaded successfully!")
+        except Exception as e:
+            print(f"DEBUG:Image model load failed: {e}")
+            self.image_model = None
+            self.image_processor = None
+            self.image_model_name = None
+        
+        # Audio detection using pretrained Hugging Face model
+        try:
+            print(f"🎵 Loading audio model: {audio_model_name}")
+            self.audio_feature_extractor = AutoFeatureExtractor.from_pretrained(audio_model_name)
+            self.audio_model = AutoModelForAudioClassification.from_pretrained(audio_model_name).to(self.device)
+            self.audio_model.eval()
+            self.audio_model_name = audio_model_name
+            print("DEBUG:Audio model loaded successfully!")
+        except Exception as e:
+            print(f"DEBUG:Audio model load failed: {e}")
+            self.audio_feature_extractor = None
+            self.audio_model = None
+            self.audio_model_name = None
 
-            if not os.path.exists(image_path):
-                return {
-                    "error": "File not found",
-                    "prediction": None,
-                    "confidence": 0.0,
-                }
-
-            # convert it to RGB format because of model requirements
+    # Image Detection
+    def detect_image(self, image_path: str) -> Dict[str, Union[str, float]]:
+        """Detect if image is deepfake using pretrained model"""
+        
+        if not os.path.exists(image_path):
+            return {
+                "error": "file not found",
+                "prediction": "error",
+                "confidence": 0.0,
+                "timestamp": datetime.now().isoformat(),
+                "type": "image",
+                "media_type": "image",
+                "file_path": image_path
+            }
+        
+        if self.image_model is None or self.image_processor is None:
+            return {
+                "error": "image model not loaded",
+                "prediction": "error",
+                "confidence": 0.0,
+                "timestamp": datetime.now().isoformat(),
+                "type": "image",
+                "media_type": "image",
+                "file_path": image_path
+            }
+        
+        try:
+            # Empty cache
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            # Load and process image
             image = Image.open(image_path).convert("RGB")
-
-            # Preprocess the image: resize, normalize pixel values, convert to tensor
-            inputs = self.processor(images=image, return_tensors="pt").to(self.device)
-
-            # Run the model without calculating gradients (saves memory and computation)
+            inputs = self.image_processor(images=image, return_tensors="pt").to(self.device)
+            
+            # Inference
             with torch.no_grad():
-                outputs = self.model(**inputs)
-                preds = torch.softmax(outputs.logits, dim=1)
-                conf, label = torch.max(preds, 1)
-
-                # Convert the numeric label to human-readable text (real or fake)
-                prediction = self.model.config.id2label[label.item()]
-
+                outputs = self.image_model(**inputs)
+                logits = outputs.logits
+                probs = torch.nn.functional.softmax(logits, dim=-1)
+                
+                # Get prediction
+                pred_idx = torch.argmax(probs, dim=-1).item()
+                confidence = probs[0][pred_idx].item()
+                
+                # Map to "real" or "fake"
+                label_map = self.image_model.config.id2label
+                pred_label = label_map[pred_idx].lower()
+                
+                # Normalize labels
+                if "fake" in pred_label or "deepfake" in pred_label:
+                    prediction = "fake"
+                else:
+                    prediction = "real"
+            
             return {
                 "prediction": prediction,
-                "confidence": float(conf),
-                "file_path": image_path,
+                "confidence": float(confidence),
                 "type": "image",
+                "media_type": "image",
+                "file_path": image_path,
+                "timestamp": datetime.now().isoformat(),
+                "metadata": {
+                    "model_version": "pretrained-hf",
+                    "model_name": self.image_model_name,
+                    "detection_method": "Transfer Learning (No Training Required)",
+                    "raw_label": pred_label
+                }
             }
-
+            
         except Exception as e:
             return {
                 "error": str(e),
-                "prediction": None,
+                "prediction": "error",
                 "confidence": 0.0,
-                "file_path": image_path,
+                "timestamp": datetime.now().isoformat(),
+                "type": "image",
+                "media_type": "image",
+                "file_path": image_path
             }
 
-    def detect_video(
-        self, video_path: str, sample_rate: int = 30
-    ) -> Dict[str, Union[str, float]]:
-        """
-        Detect if a video contains deepfake content by analyzing multiple frames.
-
-        How it works:
-        1. Opens the video file
-        2. Extracts frames at regular intervals (every 30th frame by default)
-        3. Analyzes each sampled frame using the deepfake detection model
-        4. Aggregates all frame predictions into an overall verdict
-
-        Args:
-            video_path: Full path to the video file (e.g., "/path/to/video.mp4")
-            sample_rate: Analyze every Nth frame (default: 30)
-                        Higher = faster but less accurate
-                        Lower = slower but more thorough
-
-        Returns:
-            Dictionary containing:
-            - prediction: Overall verdict ("fake" or "real")
-            - confidence: Average confidence across all analyzed frames
-            - file_path: The path to the analyzed video
-            - type: "video"
-            - metadata: Additional info (total frames, analyzed frames, fps, etc.)
-            - error: Error message if something went wrong
-        """
-        try:
-            model_name = "Naman712/Deep-fake-detection"
-            self.load_model(model_name)
-
-            if not os.path.exists(video_path):
-                return {
-                    "error": "File not found",
-                    "prediction": None,
-                    "confidence": 0.0,
-                }
-            cap = cv2.VideoCapture(video_path)
-
-            # Check if the video was successfully opened
-            if not cap.isOpened():
-                return {
-                    "error": "Cannot open video file",
-                    "prediction": None,
-                    "confidence": 0.0,
-                }
-            total_frames = int(
-                cap.get(cv2.CAP_PROP_FRAME_COUNT)
-            )  
-            fps = cap.get(cv2.CAP_PROP_FPS)  # Frames per second
-
-            # Lists to store predictions and confidences for each analyzed frame
-            frame_predictions = []
-            frame_confidences = []
-
-            # Counters to keep track of progress
-            analyzed_frames = 0  # How many frames we actually analyzed
-            current_frame = 0  # Which frame we're currently on
-
-            # Loop through all frames in the video
-            while True:
-                # Read the next frame
-                ret, frame = cap.read()
-
-                # If we couldn't read a frame, we've reached the end of the video
-                if not ret:
-                    break
-
-                # Only analyze frames at our sample rate (e.g., every 30th frame)
-                # This saves time - we don't need to analyze every single frame
-                ##fucking math i got from github and chatgpt 
-                if current_frame % sample_rate == 0:
-                    # OpenCV reads images in BGR format, but our model expects RGB
-                    # So we need to convert the color format
-                    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-
-                    # Convert the NumPy array to a PIL Image (required by the processor)
-                    pil_image = Image.fromarray(frame_rgb)
-
-                    # Preprocess the frame just like we do for images
-                    inputs = self.processor(images=pil_image, return_tensors="pt").to(
-                        self.device
-                    )
-                    with torch.no_grad():
-                        outputs = self.model(**inputs)
-                        preds = torch.softmax(outputs.logits, dim=1)
-                        conf, label = torch.max(preds, 1)
-                        prediction = self.model.config.id2label[label.item()]
-                    frame_predictions.append(prediction)
-                    frame_confidences.append(float(conf))
-                    analyzed_frames += 1
-
-                current_frame += 1
+    # Video Detection
+    def _sample_frames(self, video_path: str, max_frames: int = 16) -> List[np.ndarray]:
+        """Sample frames uniformly from video"""
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            return []
+        
+        frames = []
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        
+        if total_frames <= 0:
             cap.release()
-            if not frame_predictions:
+            return []
+        
+        # Sample frames uniformly
+        indices = np.linspace(0, total_frames - 1, num=min(max_frames, total_frames), dtype=int)
+        
+        for idx in indices:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, int(idx))
+            ret, frame = cap.read()
+            if ret:
+                frames.append(frame)
+        
+        cap.release()
+        return frames
+
+    def detect_video(self, video_path: str, max_frames: int = 16) -> Dict[str, Union[str, float, dict]]:
+        """
+        Detect deepfake in video by analyzing sampled frames.
+        Uses per-frame classification with majority voting.
+        """
+        
+        if not os.path.exists(video_path):
+            return {
+                "error": "file not found",
+                "prediction": "error",
+                "confidence": 0.0,
+                "timestamp": datetime.now().isoformat(),
+                "type": "video",
+                "media_type": "video",
+                "file_path": video_path
+            }
+        
+        try:
+            # Sample frames
+            frames = self._sample_frames(video_path, max_frames=max_frames)
+            
+            if not frames:
                 return {
-                    "error": "No frames analyzed",
-                    "prediction": None,
+                    "error": "no frames extracted",
+                    "prediction": "error",
                     "confidence": 0.0,
+                    "timestamp": datetime.now().isoformat(),
+                    "type": "video",
+                    "media_type": "video",
+                    "file_path": video_path
                 }
-
-            fake_count = sum(1 for p in frame_predictions if p.lower() == "fake")
-
-            real_count = len(frame_predictions) - fake_count
-
-            avg_confidence = sum(frame_confidences) / len(frame_confidences)
-
-            if fake_count > real_count:
-                overall_prediction = "fake"     
-            else:
-                overall_prediction = "real"
-
-            # Calculate what percentage of frames were detected as fake
-            fake_ratio = fake_count / len(frame_predictions)
-
-            # Return comprehensive results
+            
+            # Analyze each frame
+            frame_results = []
+            for i, frame in enumerate(frames):
+                # Convert BGR to RGB
+                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                pil_image = Image.fromarray(frame_rgb)
+                
+                # Save temporarily
+                temp_path = f"/tmp/temp_frame_{i}.jpg"
+                pil_image.save(temp_path)
+                
+                # Detect on frame
+                result = self.detect_image(temp_path)
+                frame_results.append(result)
+                
+                # Cleanup
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
+            
+            # Aggregate results using majority voting
+            fake_count = sum(1 for r in frame_results if r.get("prediction") == "fake")
+            real_count = len(frame_results) - fake_count
+            
+            overall_prediction = "fake" if fake_count > real_count else "real"
+            
+            # Average confidence
+            confidences = [r.get("confidence", 0.0) for r in frame_results]
+            avg_confidence = float(np.mean(confidences)) if confidences else 0.0
+            
             return {
                 "prediction": overall_prediction,
                 "confidence": avg_confidence,
-                "file_path": video_path,
                 "type": "video",
+                "media_type": "video",
+                "file_path": video_path,
+                "timestamp": datetime.now().isoformat(),
                 "metadata": {
-                    "total_frames": total_frames,  # Total frames in video
-                    "analyzed_frames": analyzed_frames,  # How many we actually checked
-                    "fps": fps,  # Video frame rate
-                    "fake_frames": fake_count,  # Frames detected as fake
-                    "real_frames": real_count,  # Frames detected as real
-                    "fake_ratio": fake_ratio,  # Percentage of fake frames
-                },
+                    "sampled_frames": len(frames),
+                    "fake_count": fake_count,
+                    "real_count": real_count,
+                    "frame_predictions": [r.get("prediction") for r in frame_results],
+                    "model_version": "pretrained-hf",
+                    "detection_method": "Per-frame majority voting (No Training Required)"
+                }
             }
-
+            
         except Exception as e:
-            # If anything goes wrong, return an error dictionary
             return {
                 "error": str(e),
-                "prediction": None,
+                "prediction": "error",
                 "confidence": 0.0,
-                "file_path": video_path,
+                "timestamp": datetime.now().isoformat(),
+                "type": "video",
+                "media_type": "video",
+                "file_path": video_path
+            }
+
+    # Audio Detection
+    def detect_audio(self, audio_path: str) -> Dict[str, Union[str, float]]:
+        """Detect if audio is deepfake using pretrained model"""
+        
+        if self.audio_model is None or self.audio_feature_extractor is None:
+            return {
+                "error": "audio model not loaded",
+                "prediction": "error",
+                "confidence": 0.0,
+                "timestamp": datetime.now().isoformat(),
+                "type": "audio",
+                "media_type": "audio",
+                "file_path": audio_path
+            }
+        
+        if not os.path.exists(audio_path):
+            return {
+                "error": "file not found",
+                "prediction": "error",
+                "confidence": 0.0,
+                "timestamp": datetime.now().isoformat(),
+                "type": "audio",
+                "media_type": "audio",
+                "file_path": audio_path
+            }
+
+        try:
+            # Empty cache
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            # Load audio
+            waveform, sr = torchaudio.load(audio_path)
+            waveform = waveform.mean(dim=0, keepdim=True)  # Convert to mono
+            
+            target_sr = getattr(self.audio_feature_extractor, "sampling_rate", 16000)
+            if sr != target_sr:
+                waveform = torchaudio.functional.resample(waveform, sr, target_sr)
+
+            samples = waveform.squeeze(0).numpy()
+            inputs = self.audio_feature_extractor(
+                samples, 
+                sampling_rate=target_sr, 
+                return_tensors="pt", 
+                padding=True
+            )
+            
+            # Move to device
+            for k, v in inputs.items():
+                inputs[k] = v.to(self.device)
+
+            # Inference
+            with torch.no_grad():
+                outputs = self.audio_model(**inputs)
+                logits = outputs.logits
+                probs = torch.softmax(logits, dim=1)
+                conf, pred = torch.max(probs, dim=1)
+
+            # Get label
+            label_str = self.audio_model.config.id2label[pred.item()] if hasattr(self.audio_model.config, "id2label") else str(pred.item())
+            label_str = label_str.lower()
+            
+            # Map to "real" or "fake"
+            if "bonafide" in label_str or "real" in label_str:
+                pred_label = "real"
+            elif "spoof" in label_str or "fake" in label_str:
+                pred_label = "fake"
+            else:
+                pred_label = "fake" if pred.item() == 1 else "real"
+
+            return {
+                "prediction": pred_label,
+                "confidence": float(conf.item()),
+                "type": "audio",
+                "media_type": "audio",
+                "file_path": audio_path,
+                "timestamp": datetime.now().isoformat(),
+                "metadata": {
+                    "sampling_rate": target_sr,
+                    "model_version": "pretrained-hf",
+                    "model_name": self.audio_model_name,
+                    "detection_method": "Transfer Learning (No Training Required)",
+                    "raw_label": label_str
+                }
+            }
+            
+        except Exception as e:
+            return {
+                "error": str(e),
+                "prediction": "error",
+                "confidence": 0.0,
+                "timestamp": datetime.now().isoformat(),
+                "type": "audio",
+                "media_type": "audio",
+                "file_path": audio_path
+            }
+
+
+##check and routing to functions in class according to types
+    def detect(self, file_path: str) -> Dict[str, Union[str, float, dict]]:
+        """Universal detection method that routes to appropriate detector"""        
+        if not os.path.exists(file_path):
+            return {
+                "error": "file not found",
+                "prediction": "error",
+                "confidence": 0.0,
+                "timestamp": datetime.now().isoformat(),
+                "file_path": file_path
+            }
+        
+        ext = os.path.splitext(file_path)[1].lower()
+        
+        # Route to appropriate detector
+        if ext in (".jpg", ".jpeg", ".png", ".bmp", ".webp", ".gif"):
+            return self.detect_image(file_path)
+        elif ext in (".mp4", ".avi", ".mov", ".mkv", ".webm"):
+            return self.detect_video(file_path)
+        elif ext in (".wav", ".flac", ".ogg", ".mp3", ".m4a", ".aac"):
+            return self.detect_audio(file_path)
+        else:
+            return {
+                "error": "unsupported file type",
+                "prediction": "error",
+                "confidence": 0.0,
+                "timestamp": datetime.now().isoformat(),
+                "file_path": file_path
             }

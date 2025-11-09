@@ -1,8 +1,4 @@
-
 import os
-from dotenv import load_dotenv
-
-load_dotenv()
 
 class Config:
     SECRET_KEY = os.environ.get('SECRET_KEY') or 'dev-secret-key-change-in-production'
@@ -12,11 +8,16 @@ class Config:
     # File upload settings
     UPLOAD_FOLDER = 'static/uploads'
     MAX_CONTENT_LENGTH = 16 * 1024 * 1024  # 16MB
-    ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'mp4', 'avi', 'mov', 'pdf', 'doc', 'docx'}
+    ALLOWED_EXTENSIONS = {
+        'png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp',  # Images
+        'mp4', 'avi', 'mov', 'mkv', 'webm',  # Videos
+        'wav', 'flac', 'ogg', 'mp3', 'm4a', 'aac',  # Audio
+        'pdf', 'doc', 'docx', 'json', 'csv'  # Documents
+    }
 
     # Model paths
-    YOLO_MODEL_PATH = 'models/weights/yolov8n.pt'
-    DEEPFAKE_MODEL_PATH = 'models/weights/deepfake_detection.pth'
+    YOLO_MODEL_PATH = 'yolov8n.pt'  # YOLOv8 is in root directory
+    # Note: Deepfake models download automatically from Hugging Face
     FRAUD_MODEL_PATH = 'models/weights/fraud_detection.pkl'
 
     # Evidence report settings
@@ -24,27 +25,11 @@ class Config:
     REPORTS_FOLDER = 'evidence/exports'
     REPORT_RETENTION_DAYS = 365
 
-    # Security settings
+    # Security
     SESSION_COOKIE_SECURE = True
     SESSION_COOKIE_HTTPONLY = True
     SESSION_COOKIE_SAMESITE = 'Lax'
-
-    # Email settings (for notifications)
-    MAIL_SERVER = os.environ.get('MAIL_SERVER')
-    MAIL_PORT = int(os.environ.get('MAIL_PORT') or 587)
-    MAIL_USE_TLS = os.environ.get('MAIL_USE_TLS', 'true').lower() in ['true', 'on', '1']
-    MAIL_USERNAME = os.environ.get('MAIL_USERNAME')
-    MAIL_PASSWORD = os.environ.get('MAIL_PASSWORD')
-
-class DevelopmentConfig(Config):
-    DEBUG = True
-    SESSION_COOKIE_SECURE = False
-
-class ProductionConfig(Config):
-    DEBUG = False
-
-config = {
-    'development': DevelopmentConfig,
-    'production': ProductionConfig,
-    'default': DevelopmentConfig
-}
+    
+    # Audit logging
+    ENABLE_AUDIT_LOG = True
+    LOG_RETENTION_DAYS = 730
