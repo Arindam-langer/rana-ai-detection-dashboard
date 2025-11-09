@@ -1,5 +1,3 @@
-// Fixed AI Detection & Evidence System JS Core
-// NOTE: This version ensures JSON.parse issues are avoided and UI behavior is consistent
 
 (() => {
   const data = {
@@ -65,25 +63,46 @@
     });
   }
 
-  function simulateAnalysis(type, file) {
+  async function performActualAnalysis(type, file) {
     const progress = document.getElementById("progressBar");
     const result = document.getElementById("analysisResult");
+    progress.classList.remove("hidden");
     progress.value = 0;
     result.innerHTML = "";
-    progress.classList.remove("hidden");
 
-    let interval = setInterval(() => {
-      progress.value += 10;
-      if (progress.value >= 100) {
-        clearInterval(interval);
-        progress.classList.add("hidden");
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('detection_type', type);
 
+    try {
+      // Simulate progress
+      const progressInterval = setInterval(() => {
+        if (progress.value < 90) {
+          progress.value += 10;
+        }
+      }, 200);
+
+      const response = await fetch('/detection', {
+        method: 'POST',
+        body: formData
+      });
+
+      clearInterval(progressInterval);
+      progress.value = 100;
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const result_data = await response.json();
+      
+      if (result_data.success) {
         const detection = {
-          id: Date.now(),
-          type,
-          filename: file.name,
-          confidence: Math.random() * 0.3 + 0.7,
-          timestamp: new Date().toISOString()
+          id: result_data.detection_id || Date.now(),
+          type: result_data.detection_type || type,
+          filename: result_data.filename || file.name,
+          confidence: result_data.confidence || 0.85,
+          timestamp: result_data.timestamp || new Date().toISOString()
         };
 
         data.sampleDetections.unshift(detection);
@@ -93,8 +112,15 @@
         renderStats();
         renderDetectionsTable();
         showAnalysisResult(detection);
+      } else {
+        result.innerHTML = `<div class="error">Error: ${result_data.error || 'Unknown error occurred'}</div>`;
       }
-    }, 150);
+    } catch (error) {
+      console.error('Analysis error:', error);
+      result.innerHTML = `<div class="error">Analysis failed: ${error.message}</div>`;
+    } finally {
+      setTimeout(() => progress.classList.add("hidden"), 1000);
+    }
   }
 
   function showAnalysisResult(det) {
@@ -108,7 +134,61 @@
     document.getElementById("genReport").onclick = () => generateReport(det);
   }
 
-  function generateReport(detection) {
+  async function generateReport(detection) {
+    try {
+      const response = await fetch('/reports/generate', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          detection_id: detection.id
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const result = await response.json();
+      
+      if (result.success) {
+        // Create a local representation for the UI
+        const reportId = result.report_id || `EVD-${randomId().toUpperCase()}`;
+        
+        // Try to download the PDF from backend
+        const pdfUrl = result.pdf_url || `/reports/download/${result.report_id}`;
+        
+        data.evidenceReports.unshift({
+          id: reportId,
+          detection_id: detection.id,
+          generated_at: result.timestamp || new Date().toISOString(),
+          type: detection.type,
+          status: "verified",
+          pdfBlobUrl: pdfUrl
+        });
+        
+        data.statistics.reports_generated++;
+        renderReportsTable();
+        renderDetectionsTable();
+        
+        alert('Report generated successfully!');
+        
+        // Open the report
+        window.open(pdfUrl, '_blank');
+      } else {
+        throw new Error(result.error || 'Failed to generate report');
+      }
+    } catch (error) {
+      console.error('Report generation error:', error);
+      alert('Failed to generate report: ' + error.message);
+      
+      // Fallback to client-side PDF generation
+      generateClientSidePDF(detection);
+    }
+  }
+
+  function generateClientSidePDF(detection) {
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF();
     const reportId = `EVD-${randomId().toUpperCase()}`;
@@ -122,9 +202,16 @@
     const blob = doc.output("blob");
     const url = URL.createObjectURL(blob);
 
-    data.evidenceReports.unshift({ id: reportId, detection_id: detection.id, generated_at: new Date().toISOString(), type: detection.type, status: "verified", pdfBlobUrl: url });
+    data.evidenceReports.unshift({
+      id: reportId,
+      detection_id: detection.id,
+      generated_at: new Date().toISOString(),
+      type: detection.type,
+      status: "verified",
+      pdfBlobUrl: url
+    });
+    
     data.statistics.reports_generated++;
-
     renderReportsTable();
     renderDetectionsTable();
     window.open(url);
@@ -147,11 +234,13 @@
       selectedFile = e.target.files[0];
       btn.disabled = !(selectedFile && select.value);
     });
+    
     select.addEventListener("change", () => {
       btn.disabled = !(selectedFile && select.value);
     });
+    
     btn.addEventListener("click", () => {
-      simulateAnalysis(select.value, selectedFile);
+      performActualAnalysis(select.value, selectedFile);
     });
   }
 
@@ -162,19 +251,20 @@
     initUI();
 
     // Secret hotkey: Shift+Alt+Enter to show author name
-   document.addEventListener("keydown", function(e) {
-  if (e.shiftKey && e.altKey && (e.key === "Enter" || e.code === "Enter")) {
-    alert("Author: Akshat Jasrotia\nGithub: akshatjasrotia85");
-  }
-});
+    document.addEventListener("keydown", function(e) {
+      if (e.shiftKey && e.altKey && (e.key === "Enter" || e.code === "Enter")) {
+        alert("Author: Akshat Jasrotia\nGithub: akshatjasrotia85");
+      }
+    });
 
     document.body.addEventListener("click", e => {
       if (e.target.classList.contains("action-btn")) {
         const id = +e.target.dataset.id;
         const det = data.sampleDetections.find(d => d.id === id);
         if (!det) return;
-        if (e.target.dataset.action === "generate") generateReport(det);
-        else {
+        if (e.target.dataset.action === "generate") {
+          generateReport(det);
+        } else {
           const rep = data.evidenceReports.find(r => r.detection_id === det.id);
           if (rep) window.open(rep.pdfBlobUrl);
         }

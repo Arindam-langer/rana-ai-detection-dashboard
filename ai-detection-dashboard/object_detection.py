@@ -1,4 +1,3 @@
-
 import cv2
 import numpy as np
 from ultralytics import YOLO
@@ -37,23 +36,35 @@ class ObjectDetector:
                     detection = {
                         'class': self.class_names[int(box.cls)],
                         'confidence': float(box.conf),
-                        'bbox': box.xyxy[0].tolist(),
-                        'center': [(box.xyxy[0][0] + box.xyxy[0][2])/2, 
-                                  (box.xyxy[0][1] + box.xyxy[0][3])/2]
+                        'bbox': [float(x) for x in box.xyxy[0].tolist()],
+                        'center': [float((box.xyxy[0][0] + box.xyxy[0][2])/2), 
+                                  float((box.xyxy[0][1] + box.xyxy[0][3])/2)]
                     }
                     detections.append(detection)
 
+        # Determine primary class (highest confidence detection)
+        primary_class = "unknown"
+        max_confidence = 0.0
+        
+        if detections:
+            # Sort by confidence and get the highest
+            sorted_detections = sorted(detections, key=lambda x: x['confidence'], reverse=True)
+            primary_class = sorted_detections[0]['class']
+            max_confidence = sorted_detections[0]['confidence']
+
         return {
-            'prediction': 'objects_detected',
-            'confidence': max([d['confidence'] for d in detections]) if detections else 0.0,
+            'prediction': primary_class,  # Main class of the image
+            'confidence': max_confidence,
             'type': 'image',
             'file_path': image_path,
             'timestamp': datetime.now().isoformat(),
             'detections': detections,
             'object_count': len(detections),
+            'all_classes': list(set([d['class'] for d in detections])),  # All unique classes found
             'metadata': {
                 'model_version': 'YOLOv8n',
-                'detection_method': 'object_detection'
+                'detection_method': 'object_detection',
+                'primary_object': primary_class
             }
         }
 
@@ -79,7 +90,7 @@ class ObjectDetector:
                             detection = {
                                 'class': self.class_names[int(box.cls)],
                                 'confidence': float(box.conf),
-                                'bbox': box.xyxy[0].tolist()
+                                'bbox': [float(x) for x in box.xyxy[0].tolist()]
                             }
                             frame_objects.append(detection)
 
@@ -94,25 +105,37 @@ class ObjectDetector:
 
         # Aggregate results
         all_detections = []
+        class_counts = {}
+        
         for frame_data in frame_detections:
-            all_detections.extend(frame_data['objects'])
+            for detection in frame_data['objects']:
+                all_detections.append(detection)
+                class_name = detection['class']
+                class_counts[class_name] = class_counts.get(class_name, 0) + 1
+
+        # Determine primary class (most frequently detected)
+        primary_class = "unknown"
+        if class_counts:
+            primary_class = max(class_counts, key=class_counts.get)
 
         unique_classes = set([d['class'] for d in all_detections])
-        avg_confidence = sum([d['confidence'] for d in all_detections]) / len(all_detections) if all_detections else 0.0
+        avg_confidence = float(sum([d['confidence'] for d in all_detections]) / len(all_detections)) if all_detections else 0.0
 
         return {
-            'prediction': 'objects_detected',
+            'prediction': primary_class,  # Main class of the video
             'confidence': avg_confidence,
             'type': 'video',
             'file_path': video_path,
             'timestamp': datetime.now().isoformat(),
             'unique_objects': list(unique_classes),
             'total_detections': len(all_detections),
+            'class_frequency': class_counts,  # How often each class appears
             'frame_analysis': frame_detections,
             'metadata': {
                 'total_frames': frame_count,
                 'analyzed_frames': len(frame_detections),
                 'model_version': 'YOLOv8n',
-                'detection_method': 'video_object_detection'
+                'detection_method': 'video_object_detection',
+                'primary_object': primary_class
             }
         }

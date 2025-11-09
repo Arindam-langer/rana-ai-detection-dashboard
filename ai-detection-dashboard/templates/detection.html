@@ -99,49 +99,72 @@ endblock %} {% block content %}
                 <i class="fas fa-file-pdf"></i> Analyze & Generate Report
               </button>
             </div>
+          </form>
 
-      <!-- Loading Spinner -->
-      <div id="loadingSpinner" class="text-center mt-4" style="display: none">
-        <div
-          class="spinner-border text-primary"
-          role="status"
-          style="width: 3rem; height: 3rem"
-        >
-          <span class="visually-hidden">Loading...</span>
-        </div>
-        <p class="mt-3"><strong>Analyzing...</strong></p>
-        <p class="text-muted">This may take a few moments</p>
-      </div>
+          <!-- Loading Spinner -->
+          <div id="loadingSpinner" class="text-center mt-4" style="display: none">
+            <div
+              class="spinner-border text-primary"
+              role="status"
+              style="width: 3rem; height: 3rem"
+            >
+              <span class="visually-hidden">Loading...</span>
+            </div>
+            <p class="mt-3"><strong>Analyzing...</strong></p>
+            <p class="text-muted">This may take a few moments</p>
+          </div>
 
-      <!-- Results Card -->
-      <div id="resultsCard" class="card shadow mt-4" style="display: none">
-        <div class="card-header bg-primary text-white">
-          <h5 class="mb-0">
-            <i class="fas fa-chart-bar"></i> Detection Results
-          </h5>
-        </div>
-        <div class="card-body" id="resultsContent">
-          <!-- Results will be inserted here -->
+          <!-- Results Card -->
+          <div id="resultsCard" class="card shadow mt-4" style="display: none">
+            <div class="card-header bg-primary text-white">
+              <h5 class="mb-0">
+                <i class="fas fa-chart-bar"></i> Detection Results
+              </h5>
+            </div>
+            <div class="card-body" id="resultsContent">
+              <!-- Results will be inserted here -->
+            </div>
+          </div>
         </div>
       </div>
     </div>
   </div>
 </div>
-{% endblock %} {% block extra_js %}
+{% endblock %} 
 
+{% block extra_js %}
 <script>
   const form = document.getElementById("detectionForm");
-  const submitBtn = document.getElementById("submitBtn");
+  const analyzeBtn = document.getElementById("analyzeBtn");
+  const analyzeAndReportBtn = document.getElementById("analyzeAndReportBtn");
   const loadingSpinner = document.getElementById("loadingSpinner");
   const resultsCard = document.getElementById("resultsCard");
   const resultsContent = document.getElementById("resultsContent");
 
-  form.addEventListener("submit", async (e) => {
-    e.preventDefault();
+  // Main submit function
+  async function submitForm(generateReport) {
+    // Validate form
+    const detectionType = document.getElementById("detectionType").value;
+    const fileInput = document.getElementById("fileInput");
+    
+    if (!detectionType) {
+      alert("Please select a detection type");
+      return;
+    }
+    
+    if (!fileInput.files || fileInput.files.length === 0) {
+      alert("Please select a file to upload");
+      return;
+    }
+
+    // Set the hidden field value
+    document.getElementById("generateReportField").value = generateReport;
 
     // Show loading state
-    submitBtn.disabled = true;
-    submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Analyzing...';
+    analyzeBtn.disabled = true;
+    analyzeAndReportBtn.disabled = true;
+    analyzeBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Analyzing...';
+    analyzeAndReportBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Analyzing...';
     loadingSpinner.style.display = "block";
     resultsCard.style.display = "none";
 
@@ -164,11 +187,13 @@ endblock %} {% block content %}
       displayError("Network error: " + error.message);
     } finally {
       // Reset button state
-      submitBtn.disabled = false;
-      submitBtn.innerHTML = '<i class="fas fa-play"></i> Run Detection';
+      analyzeBtn.disabled = false;
+      analyzeAndReportBtn.disabled = false;
+      analyzeBtn.innerHTML = '<i class="fas fa-search"></i> Analyze Only';
+      analyzeAndReportBtn.innerHTML = '<i class="fas fa-file-pdf"></i> Analyze & Generate Report';
       loadingSpinner.style.display = "none";
     }
-  });
+  }
 
   function displayResult(data) {
     const result = data.result;
@@ -238,7 +263,7 @@ endblock %} {% block content %}
                 </div>
             </div>
         `;
-    } else if (document.getElementById("generateReport").checked) {
+    } else if (document.getElementById("generateReportField").value === "on") {
       html += `
             <div class="alert alert-warning mt-3">
                 <i class="fas fa-exclamation-circle"></i>
@@ -285,5 +310,21 @@ endblock %} {% block content %}
     resultsCard.style.display = "block";
     resultsCard.scrollIntoView({ behavior: "smooth" });
   }
+
+  // Form validation on input
+  document.getElementById("detectionType").addEventListener("change", validateForm);
+  document.getElementById("fileInput").addEventListener("change", validateForm);
+
+  function validateForm() {
+    const detectionType = document.getElementById("detectionType").value;
+    const fileInput = document.getElementById("fileInput");
+    const hasFile = fileInput.files && fileInput.files.length > 0;
+    
+    analyzeBtn.disabled = !(detectionType && hasFile);
+    analyzeAndReportBtn.disabled = !(detectionType && hasFile);
+  }
+
+  // Initial validation
+  validateForm();
 </script>
 {% endblock %}
